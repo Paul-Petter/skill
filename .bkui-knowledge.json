@@ -1,0 +1,14 @@
+{
+  "defaultVueVersion": "vue3",
+  "coreSkills": [
+    "bkui-quick-start",
+    "bkui-vue",
+    "bkui-builder",
+    "bkui-cheatsheet",
+    "vue-best-practices",
+    "api-standard",
+    "pinia-setup"
+  ],
+  "installedSkills": [],
+  "version": "0.0.1-beta.38"
+}
