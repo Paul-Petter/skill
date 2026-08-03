@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>表格管理页面</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bkui-vue@2.0.2-beta.112/dist/style.variable.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: PingFang SC,Microsoft Yahei,Helvetica,Aria; background: #f5f7fa; }
+    #app { padding: 24px; min-height: 100vh; }
+
+    .table-page { height: 100%; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; }
+    .toolbar-right { display: flex; align-items: center; gap: 16px; }
+    .filter-tab .bk-tab-header { border: 1px solid #dcdee5; border-radius: 2px; background: #fff; }
+    .filter-tab .bk-tab-header-item { border: none; background: transparent; padding: 0 16px; }
+    .filter-tab .bk-tab-header-item.is-active { background: #e1ecff; color: #3a84ff; }
+    .search-icon { cursor: pointer; }
+
+    .mt4 { margin-top: 4px; } .mt8 { margin-top: 8px; }
+    .mt10 { margin-top: 10px; } .mt12 { margin-top: 12px; }
+    .mt16 { margin-top: 16px; } .mt20 { margin-top: 20px; }
+    .mb4 { margin-bottom: 4px; } .mb8 { margin-bottom: 8px; }
+    .mb10 { margin-bottom: 10px; } .mb12 { margin-bottom: 12px; }
+    .mb16 { margin-bottom: 16px; } .mb20 { margin-bottom: 20px; }
+    .ml10 { margin-left: 10px; } .mr10 { margin-right: 10px; }
+    .flex-row { display: flex; flex-direction: row; }
+    .flex-col { display: flex; flex-direction: column; }
+    .flex-1 { flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>window.process = { env: { NODE_ENV: 'production' } };</script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bkui-vue@2.0.2-beta.112/dist/index.umd.js"></script>
+  <script>
+    const { createApp, ref, reactive, computed, onMounted, watch, nextTick, h, resolveComponent } = Vue;
+
+    const MOCK_DATA = [
+      { id: 1, name: '默认清洗规则', source: 'builtin', definition: 'regex:^\\d{4}-\\d{2}-\\d{2}$', description: '按照标准日期格式进行清洗', updatedBy: '张三', updatedAt: '2026-03-28 14:30:00', enabled: true },
+      { id: 2, name: '自定义脱敏策略', source: 'custom', definition: 'mask:phone,email', description: '对手机号和邮箱进行脱敏处理', updatedBy: '李四', updatedAt: '2026-03-27 10:15:00', enabled: true },
+      { id: 3, name: 'IP 白名单校验', source: 'builtin', definition: 'whitelist:10.0.0.0/8', description: '内网 IP 地址白名单校验规则', updatedBy: '王五', updatedAt: '2026-03-26 09:00:00', enabled: false },
+      { id: 4, name: '日志格式化规则', source: 'custom', definition: 'format:json,timestamp', description: '将原始日志转换为 JSON 格式并附加时间戳', updatedBy: '赵六', updatedAt: '2026-03-25 16:45:00', enabled: true },
+      { id: 5, name: '字段映射转换', source: 'builtin', definition: 'mapping:src->dst', description: '源字段到目标字段的自动映射转换', updatedBy: '张三', updatedAt: '2026-03-24 11:20:00', enabled: false },
+      { id: 6, name: '数据质量打分', source: 'custom', definition: 'score:completeness,accuracy', description: '基于完整性和准确性维度进行数据质量评分', updatedBy: '李四', updatedAt: '2026-03-23 08:50:00', enabled: true },
+      { id: 7, name: '异常值检测', source: 'builtin', definition: 'detect:zscore>3', description: '使用 Z-Score 方法识别异常数据点', updatedBy: '王五', updatedAt: '2026-03-22 15:10:00', enabled: false },
+      { id: 8, name: '编码转换规则', source: 'custom', definition: 'encoding:utf8,gbk', description: '将 GBK 编码数据统一转换为 UTF-8', updatedBy: '赵六', updatedAt: '2026-03-21 13:30:00', enabled: true },
+    ];
+
+    const app = createApp({
+      template: `
+        <div class="table-page">
+          <bk-alert theme="info" class="mb16">
+            <template #title>平台按优先级从大到小匹配，可直接编辑优先级数值。</template>
+          </bk-alert>
+
+          <div class="toolbar mb16">
+            <bk-button theme="primary" @click="handleCreate"><plus-icon />新建</bk-button>
+            <div class="toolbar-right">
+              <bk-tab v-model:active="activeTab" type="card" class="filter-tab" @change="handleTabChange">
+                <bk-tab-panel name="all" :label="'全部 (' + totalCount + ')'" />
+                <bk-tab-panel name="enabled" :label="'启用 (' + enabledCount + ')'" />
+                <bk-tab-panel name="disabled" :label="'停用 (' + disabledCount + ')'" />
+              </bk-tab>
+              <bk-input
+                v-model="searchKey"
+                type="search"
+                placeholder="搜索 名称、描述、更新人、定义"
+                :clearable="true"
+                style="width: 280px"
+                @enter="handleSearch"
+                @clear="handleSearch"
+              />
+            </div>
+          </div>
+
+          <bk-table
+            :data="tableData"
+            :columns="columns"
+            :pagination="pagination"
+            :remote-pagination="true"
+            :settings="true"
+            @page-value-change="handlePageChange"
+            @page-limit-change="handleLimitChange"
+            @filter-change="handleFilterChange"
+            @sort-change="handleSortChange"
+          />
+
+          <bk-dialog
+            v-model:isShow="dialogVisible"
+            :title="dialogTitle"
+            width="600"
+            @confirm="handleConfirm"
+          >
+            <bk-form ref="formRef" :model="formData" :rules="formRules" label-width="100">
+              <bk-form-item label="名称" property="name" required>
+                <bk-input v-model="formData.name" placeholder="请输入名称" />
+              </bk-form-item>
+              <bk-form-item label="定义" property="definition" required>
+                <bk-input v-model="formData.definition" placeholder="请输入定义" />
+              </bk-form-item>
+              <bk-form-item label="描述" property="description">
+                <bk-input v-model="formData.description" type="textarea" placeholder="请输入描述" />
+              </bk-form-item>
+            </bk-form>
+          </bk-dialog>
+        </div>
+      `,
+      setup() {
+        const activeTab = ref('all');
+        const searchKey = ref('');
+        const tableData = ref([]);
+
+        const allData = ref([]);
+
+        const totalCount = computed(() => allData.value.length);
+        const enabledCount = computed(() => allData.value.filter(r => r.enabled).length);
+        const disabledCount = computed(() => allData.value.filter(r => !r.enabled).length);
+
+        const columns = [
+          { label: '名称', field: 'name', width: 150 },
+          {
+            label: '来源',
+            field: 'source',
+            width: 100,
+            filter: {
+              list: [
+                { text: '内置', value: 'builtin' },
+                { text: '自定义', value: 'custom' },
+              ],
+            },
+            render: ({ row }) => {
+              const BkTag = resolveComponent('bk-tag');
+              return h(BkTag, { theme: row.source === 'builtin' ? 'info' : 'success' },
+                () => row.source === 'builtin' ? '内置' : '自定义');
+            },
+          },
+          { label: '定义', field: 'definition', showOverflowTooltip: true },
+          { label: '描述', field: 'description', showOverflowTooltip: true },
+          {
+            label: '更新人',
+            field: 'updatedBy',
+            width: 100,
+            filter: { list: [] },
+          },
+          {
+            label: '更新时间',
+            field: 'updatedAt',
+            width: 170,
+            sort: { value: 'desc' },
+          },
+          {
+            label: '启停',
+            field: 'enabled',
+            width: 80,
+            render: ({ row }) => {
+              const BkSwitcher = resolveComponent('bk-switcher');
+              return h(BkSwitcher, {
+                modelValue: row.enabled,
+                theme: 'primary',
+                size: 'small',
+                onChange: (val) => handleToggle(row, val),
+              });
+            },
+          },
+          {
+            label: '操作',
+            field: 'operation',
+            width: 120,
+            render: ({ row }) => {
+              const BkButton = resolveComponent('bk-button');
+              return h('span', [
+                h(BkButton, { text: true, theme: 'primary', onClick: () => handleEdit(row) }, () => '编辑'),
+                h(BkButton, { text: true, theme: 'danger', style: 'margin-left:8px', onClick: () => handleDelete(row) }, () => '删除'),
+              ]);
+            },
+          },
+        ];
+
+        const pagination = reactive({
+          current: 1,
+          count: 0,
+          limit: 10,
+          showTotalCount: true,
+          location: 'left',
+        });
+
+        const dialogVisible = ref(false);
+        const dialogTitle = ref('新建');
+        const formRef = ref(null);
+        const formData = reactive({
+          id: 0,
+          name: '',
+          definition: '',
+          description: '',
+        });
+
+        const formRules = {
+          name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
+          definition: [{ required: true, message: '请输入定义', trigger: 'blur' }],
+        };
+
+        const fetchData = () => {
+          setTimeout(() => {
+            let data = JSON.parse(JSON.stringify(MOCK_DATA));
+
+            if (activeTab.value === 'enabled') {
+              data = data.filter(r => r.enabled);
+            } else if (activeTab.value === 'disabled') {
+              data = data.filter(r => !r.enabled);
+            }
+
+            if (searchKey.value) {
+              const key = searchKey.value.toLowerCase();
+              data = data.filter(r =>
+                r.name.toLowerCase().includes(key)
+                || r.description.toLowerCase().includes(key)
+                || r.updatedBy.toLowerCase().includes(key)
+                || r.definition.toLowerCase().includes(key)
+              );
+            }
+
+            allData.value = JSON.parse(JSON.stringify(MOCK_DATA));
+            pagination.count = data.length;
+
+            const start = (pagination.current - 1) * pagination.limit;
+            tableData.value = data.slice(start, start + pagination.limit);
+          }, 500);
+        };
+
+        const handleTabChange = (tab) => {
+          activeTab.value = tab;
+          pagination.current = 1;
+          fetchData();
+        };
+
+        const handleSearch = () => {
+          pagination.current = 1;
+          fetchData();
+        };
+
+        const handlePageChange = (page) => {
+          pagination.current = page;
+          fetchData();
+        };
+
+        const handleLimitChange = (limit) => {
+          pagination.limit = limit;
+          pagination.current = 1;
+          fetchData();
+        };
+
+        const handleFilterChange = (filters) => {
+          console.log('Filter changed:', filters);
+          fetchData();
+        };
+
+        const handleSortChange = (sort) => {
+          console.log('Sort changed:', sort);
+          fetchData();
+        };
+
+        const handleToggle = (row, enabled) => {
+          console.log('Toggle:', row.id, enabled);
+        };
+
+        const handleCreate = () => {
+          dialogTitle.value = '新建';
+          Object.assign(formData, { id: 0, name: '', definition: '', description: '' });
+          dialogVisible.value = true;
+        };
+
+        const handleEdit = (row) => {
+          dialogTitle.value = '编辑';
+          Object.assign(formData, { id: row.id, name: row.name, definition: row.definition, description: row.description });
+          dialogVisible.value = true;
+        };
+
+        const handleDelete = (row) => {
+          console.log('Delete:', row.id);
+        };
+
+        const handleConfirm = async () => {
+          try {
+            if (formRef.value && formRef.value.validate) {
+              await formRef.value.validate();
+            }
+          } catch (e) {
+            return;
+          }
+          dialogVisible.value = false;
+          fetchData();
+          if (bkuiVue.Message) {
+            bkuiVue.Message({ theme: 'success', message: dialogTitle.value + '成功' });
+          }
+        };
+
+        onMounted(() => {
+          fetchData();
+        });
+
+        return {
+          activeTab,
+          searchKey,
+          tableData,
+          totalCount,
+          enabledCount,
+          disabledCount,
+          columns,
+          pagination,
+          dialogVisible,
+          dialogTitle,
+          formRef,
+          formData,
+          formRules,
+          handleTabChange,
+          handleSearch,
+          handlePageChange,
+          handleLimitChange,
+          handleFilterChange,
+          handleSortChange,
+          handleToggle,
+          handleCreate,
+          handleEdit,
+          handleDelete,
+          handleConfirm,
+        };
+      },
+    });
+
+    app.use(bkuiVue.default || bkuiVue);
+
+    app.component('plus-icon', {
+      render() {
+        return h('span', { style: 'display:inline-flex;align-items:center;justify-content:center;margin-right:6px' }, [
+          h('svg', { xmlns: 'http://www.w3.org/2000/svg', viewBox: '0 0 1024 1024', width: '1em', height: '1em', fill: 'currentColor' }, [
+            h('path', { d: 'M544 160a32 32 0 0 0-64 0v320H160a32 32 0 0 0 0 64h320v320a32 32 0 0 0 64 0V544h320a32 32 0 0 0 0-64H544V160z' })
+          ])
+        ]);
+      }
+    });
+
+    app.mount('#app');
+  </script>
+</body>
+</html>
